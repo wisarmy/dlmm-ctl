@@ -60,7 +60,7 @@ pub fn get_payer() -> Result<Arc<Keypair>> {
 mod tests {
     #[ctor::ctor]
     fn init() {
-        crate::logger::init();
+        crate::logger::init(true);
         dotenvy::dotenv().ok();
     }
 }

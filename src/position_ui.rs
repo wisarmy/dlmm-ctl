@@ -9,16 +9,45 @@ use ratatui::{
     Terminal,
 };
 
+pub enum UiMessage {
+    Quit,
+    ScrollUp,
+    ScrollDown,
+    UpdatePositions(Vec<PositionInfo>),
+}
+
 impl<'a> PositionManager<'a> {
+    // 添加滚动控制方法
+    pub fn scroll_up(&mut self) {
+        if self.scroll_offset > 0 {
+            self.scroll_offset -= 1;
+        }
+    }
+
+    pub fn scroll_down(&mut self, position_count: usize, visible_positions: usize) {
+        if self.scroll_offset + visible_positions < position_count {
+            self.scroll_offset += 1;
+        }
+    }
     // 添加绘制界面的方法
     pub fn draw_ui(
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
         position_infos: &[PositionInfo],
+        scroll_offset: usize,
     ) -> Result<()> {
         terminal.draw(|f| {
             let size = f.area();
 
-            // 创建垂直布局
+            // 计算可见区域能显示多少个 position
+            let visible_height = size.height as usize - 7; // 减去标题和帮助区域的高度
+            let positions_per_page = visible_height / 6; // 每个 position 占 6 行高度
+
+            // 获取当前可见的 position 切片
+            let visible_positions = position_infos
+                .iter()
+                .skip(scroll_offset)
+                .take(positions_per_page);
+
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
@@ -26,50 +55,50 @@ impl<'a> PositionManager<'a> {
                     [
                         Constraint::Length(3), // 标题
                         Constraint::Min(0),    // position 列表
+                        Constraint::Length(3), // 帮助信息
                     ]
                     .as_ref(),
                 )
                 .split(size);
 
-            // 绘制标题
-            let title = Paragraph::new("Position Monitor")
-                .style(Style::default().fg(Color::Cyan))
-                .block(Block::default().borders(Borders::ALL));
+            // 绘制标题（包含滚动信息）
+            let title = Paragraph::new(format!(
+                "Position Monitor ({}/{} positions)",
+                scroll_offset + 1,
+                position_infos.len()
+            ))
+            .style(Style::default().fg(Color::Cyan))
+            .block(Block::default().borders(Borders::ALL));
             f.render_widget(title, chunks[0]);
 
-            // 为每个 position 创建显示区域
+            // 为可见的 positions 创建显示区域
             let position_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(
-                    position_infos
-                        .iter()
+                    visible_positions
+                        .clone()
                         .map(|_| Constraint::Length(6))
                         .collect::<Vec<_>>(),
                 )
                 .split(chunks[1]);
 
-            // 绘制每个 position 的信息
-            for (i, position) in position_infos.iter().enumerate() {
+            // 绘制可见的 positions
+            for (i, position) in visible_positions.enumerate() {
                 let pos_block = Self::render_position_block(position);
                 f.render_widget(pos_block, position_chunks[i]);
             }
 
-            // 添加帮助信息
+            // 帮助信息
             let help_text = Line::from(vec![
                 Span::raw("Press "),
+                Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+                Span::raw(" to scroll, "),
                 Span::styled("q", Style::default().fg(Color::Yellow)),
                 Span::raw(" to quit"),
             ]);
 
             let help = Paragraph::new(help_text).block(Block::default().borders(Borders::ALL));
-
-            // 在底部显示帮助信息
-            let help_chunk = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(3)].as_ref())
-                .split(f.area())[1];
-
-            f.render_widget(help, help_chunk);
+            f.render_widget(help, chunks[2]);
         })?;
 
         Ok(())
