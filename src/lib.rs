@@ -7,6 +7,7 @@ use rand::seq::SliceRandom;
 use std::{env, sync::Arc};
 use tracing::debug;
 
+pub mod check_my_balance;
 pub mod list_all_binstep;
 pub mod logger;
 pub mod math;

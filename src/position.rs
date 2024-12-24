@@ -11,9 +11,14 @@ use anchor_client::{
 };
 use anyhow::Result;
 use lb_clmm::state::position::PositionV2;
+use rust_decimal::Decimal;
 use solana_account_decoder::UiAccountEncoding;
+use tracing::{debug, info};
 
-use crate::parser::parse_position_data;
+use crate::{
+    pair::{self, get_pair},
+    parser::parse_position_data,
+};
 
 pub struct PositionManager<'a> {
     program: &'a Program<Rc<Keypair>>,
@@ -62,4 +67,57 @@ impl<'a> PositionManager<'a> {
 
         Ok(positions)
     }
+
+    pub async fn get_info(&self, pubkey: Pubkey, position: PositionV2) -> Result<PositionInfo> {
+        // get pair
+        let pair_info = get_pair(position.lb_pair, self.program).await?;
+        let lower_bin_price = pair::caculate_bin_price(
+            pair_info.bin_step,
+            position.lower_bin_id,
+            &pair_info.x_mint,
+            &pair_info.y_mint,
+        )?;
+        let upper_bin_price = pair::caculate_bin_price(
+            pair_info.bin_step,
+            position.upper_bin_id,
+            &pair_info.x_mint,
+            &pair_info.y_mint,
+        )?;
+
+        let position_info = PositionInfo {
+            pubkey,
+            lb_pair: position.lb_pair,
+            lower_bin_id: position.lower_bin_id,
+            lower_bin_price,
+            upper_bin_id: position.upper_bin_id,
+            upper_bin_price,
+            active_bin_id: pair_info.active_id,
+            active_bin_price: pair_info.token_price,
+        };
+
+        Ok(position_info)
+    }
+
+    pub async fn monitor_positions(&self) -> Result<()> {
+        loop {
+            let positions = self.get_positions().await?;
+            for (pubkey, position) in positions {
+                debug!("position: {}, {:#?}", pubkey, position);
+                let position_info = self.get_info(pubkey, position).await?;
+                info!("{:#?}", position_info);
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
+    }
+}
+#[derive(Debug)]
+pub struct PositionInfo {
+    pub pubkey: Pubkey,
+    pub lb_pair: Pubkey,
+    pub lower_bin_id: i32,
+    pub lower_bin_price: Decimal,
+    pub upper_bin_id: i32,
+    pub upper_bin_price: Decimal,
+    pub active_bin_id: i32,
+    pub active_bin_price: Decimal,
 }

@@ -7,13 +7,8 @@ use anchor_client::{
 use anchor_lang::prelude::*;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use dlmm_ctl::{get_payer, logger};
-use tracing::info;
-
-use crate::position::PositionManager;
-
-mod parser;
-mod position;
+use dlmm_ctl::{get_payer, logger, pair::get_pair, position::PositionManager};
+use tracing::{debug, info};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -26,6 +21,8 @@ struct Cli {
 enum Commands {
     /// Get positions for the current wallet
     Positions,
+    /// Monitor positions
+    MonitorPositions,
     /// Show information of the given liquidity pair.
     ShowPair { lb_pair: Pubkey },
 }
@@ -54,11 +51,20 @@ async fn main() -> Result<()> {
             let position_manager = PositionManager::new(&program, payer.pubkey());
             let positions = position_manager.get_positions().await?;
             for (pubkey, position) in positions {
-                info!("position: {}, lb_pair: {}", pubkey, position.lb_pair);
+                debug!("position: {}, {:#?}", pubkey, position);
+                info!(
+                    "position: {}, lb_pair: {}, lower_bin_id: {}, upper_bin_id: {}",
+                    pubkey, position.lb_pair, position.lower_bin_id, position.upper_bin_id
+                );
             }
         }
+        Commands::MonitorPositions => {
+            let position_manager = PositionManager::new(&program, payer.pubkey());
+            position_manager.monitor_positions().await?;
+        }
         Commands::ShowPair { lb_pair } => {
-            dlmm_ctl::pair::show_pair(lb_pair, &program).await?;
+            let pair_info = get_pair(lb_pair, &program).await?;
+            info!("{:#?}", pair_info);
         }
     }
 

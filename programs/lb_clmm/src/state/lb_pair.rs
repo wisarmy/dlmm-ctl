@@ -155,6 +155,7 @@ impl Default for LbPair {
 
 /// Stores the state relevant for tracking liquidity mining rewards
 #[zero_copy]
+#[repr(C, packed)]
 #[derive(InitSpace, Default, Debug, PartialEq)]
 pub struct RewardInfo {
     /// Reward token mint.

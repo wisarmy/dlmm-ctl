@@ -1,7 +1,9 @@
-use anchor_lang::AnchorDeserialize;
+use anchor_lang::prelude::*;
 use anyhow::Result;
+use lb_clmm::state::bin::Bin;
 use lb_clmm::{
-    constants::MAX_BIN_PER_POSITION,
+    constants::{MAX_BIN_PER_ARRAY, MAX_BIN_PER_POSITION},
+    state::bin::BinArray,
     state::position::{FeeInfo, PositionV2, UserRewardInfo},
 };
 
@@ -83,4 +85,55 @@ pub fn parse_position_data(data: &[u8]) -> Result<PositionV2> {
     };
 
     Ok(position)
+}
+
+#[allow(dead_code)]
+pub fn parse_bin_data(data: &[u8]) -> Result<BinArray> {
+    // 辅助函数：从切片中解析指定类型的数据
+    fn parse_slice<T: AnchorDeserialize>(data: &[u8]) -> Result<T> {
+        T::try_from_slice(data).map_err(anyhow::Error::from)
+    }
+
+    println!("data len {}", data.len());
+
+    let start = 8; // 跳过discriminator
+
+    let index: i64 = parse_slice(&data[start..start + 8])?;
+    let version: u8 = parse_slice(&data[start + 8..start + 9])?;
+    let _padding: [u8; 7] = data[start + 9..start + 16].try_into()?;
+    let lb_pair: Pubkey = parse_slice(&data[start + 16..start + 48])?;
+
+    // 为bins数组分配内存
+    let mut bins = [Bin::default(); MAX_BIN_PER_ARRAY];
+
+    // 解析每一个bin的数据
+    let bins_start = start + 48;
+    let bin_size = 144; // Bin结构体的大小
+
+    for i in 0..MAX_BIN_PER_ARRAY {
+        let bin_start = bins_start + i * bin_size;
+
+        bins[i] = Bin {
+            amount_x: parse_slice(&data[bin_start..bin_start + 8])?,
+            amount_y: parse_slice(&data[bin_start + 8..bin_start + 16])?,
+            price: parse_slice(&data[bin_start + 16..bin_start + 32])?,
+            liquidity_supply: parse_slice(&data[bin_start + 32..bin_start + 48])?,
+            reward_per_token_stored: [
+                parse_slice(&data[bin_start + 48..bin_start + 64])?,
+                parse_slice(&data[bin_start + 64..bin_start + 80])?,
+            ],
+            fee_amount_x_per_token_stored: parse_slice(&data[bin_start + 80..bin_start + 96])?,
+            fee_amount_y_per_token_stored: parse_slice(&data[bin_start + 96..bin_start + 112])?,
+            amount_x_in: parse_slice(&data[bin_start + 112..bin_start + 128])?,
+            amount_y_in: parse_slice(&data[bin_start + 128..bin_start + 144])?,
+        };
+    }
+
+    Ok(BinArray {
+        index,
+        version,
+        _padding,
+        lb_pair,
+        bins,
+    })
 }
