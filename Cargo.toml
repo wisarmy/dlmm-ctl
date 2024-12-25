@@ -26,6 +26,7 @@ rust_decimal = { version = "1.36.0", features = ["maths"] }
 ratatui = "0.29.0"
 crossterm = "0.28.1"
 tracing-appender = "0.2.3"
+chrono = "0.4.39"
 
 
 [dev-dependencies]

@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anchor_client::{
     solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair, signer::Signer},
@@ -54,11 +54,12 @@ async fn main() -> Result<()> {
     let commitment_config = CommitmentConfig::confirmed();
     let client = Client::new_with_options(
         Cluster::Custom(rpc_url, wss_url),
-        Rc::new(Keypair::from_bytes(&payer.to_bytes())?),
+        Arc::new(Keypair::from_bytes(&payer.to_bytes())?),
         commitment_config,
     );
 
     let program = client.program(lb_clmm::ID)?;
+    let program = Arc::new(program);
 
     match cli.command {
         Commands::Positions => {

@@ -1,4 +1,4 @@
-use std::{io::stdout, rc::Rc, time::Duration};
+use std::{io::stdout, sync::Arc, time::Duration};
 
 use anchor_client::{
     anchor_lang::Space,
@@ -10,6 +10,7 @@ use anchor_client::{
     Program,
 };
 use anyhow::Result;
+use chrono::{DateTime, Local};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -19,7 +20,7 @@ use lb_clmm::state::position::PositionV2;
 use ratatui::{prelude::CrosstermBackend, Terminal};
 use rust_decimal::Decimal;
 use solana_account_decoder::UiAccountEncoding;
-use tokio::{select, sync::mpsc};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -29,13 +30,13 @@ use crate::{
 };
 
 pub struct PositionManager<'a> {
-    program: &'a Program<Rc<Keypair>>,
+    program: &'a Arc<Program<Arc<Keypair>>>,
     wallet: Pubkey,
     pub scroll_offset: usize,
 }
 
 impl<'a> PositionManager<'a> {
-    pub fn new(program: &'a Program<Rc<Keypair>>, wallet: Pubkey) -> Self {
+    pub fn new(program: &'a Arc<Program<Arc<Keypair>>>, wallet: Pubkey) -> Self {
         Self {
             program,
             wallet,
@@ -132,6 +133,7 @@ impl<'a> PositionManager<'a> {
         // 创建用于UI控制的channel
         let (tx, mut rx) = mpsc::channel(32);
         let input_tx = tx.clone();
+        let update_tx = tx.clone();
 
         // 创建一个处理键盘输入的任务
         let input_handle = tokio::spawn(async move {
@@ -154,8 +156,55 @@ impl<'a> PositionManager<'a> {
             }
         });
 
+        // 创建数据更新任务
+        let program = self.program.clone();
+        let wallet = self.wallet;
+        let update_handle = tokio::spawn(async move {
+            let mut interval_timer = tokio::time::interval(interval);
+            let manager = PositionManager::new(&program, wallet);
+
+            loop {
+                interval_timer.tick().await;
+                info!("fetching positions for {}", wallet);
+                match manager.get_positions().await {
+                    Ok(raw_positions) => {
+                        let mut position_infos = vec![];
+                        for (pubkey, position) in raw_positions {
+                            debug!("position: {}, {:#?}", pubkey, position);
+                            info!(
+                                "fetching info: position: {}, lb_pair: {}, last_updated: {}",
+                                pubkey,
+                                position.lb_pair,
+                                DateTime::from_timestamp(position.last_updated_at, 0)
+                                    .map(|utc| utc.with_timezone(&Local))
+                                    .map(|local| local.format("%Y-%m-%d %H:%M:%S %Z").to_string())
+                                    .unwrap_or_else(|| "invalid timestamp".to_string())
+                            );
+                            if let Ok(position_info) = manager.get_info(pubkey, position).await {
+                                if stop_loss {
+                                    let _ = manager.stop_loss(position_info.clone()).await;
+                                }
+                                position_infos.push(position_info);
+                            }
+                        }
+                        position_infos.sort_by(|a, b| b.last_updated_at.cmp(&a.last_updated_at));
+
+                        if update_tx
+                            .send(UiMessage::UpdatePositions(position_infos))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error updating positions: {}", e);
+                    }
+                }
+            }
+        });
+
         let mut positions = vec![];
-        let mut interval_timer = tokio::time::interval(interval);
 
         // 封装重绘UI的函数
         let redraw = |terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
@@ -163,68 +212,36 @@ impl<'a> PositionManager<'a> {
                       scroll_offset: usize|
          -> Result<()> { Self::draw_ui(terminal, positions, scroll_offset) };
 
-        loop {
-            select! {
-                // 处理UI消息
-                biased;
-                Some(msg) = rx.recv() => {
-                    match msg {
-                        UiMessage::Quit => break,
-                        UiMessage::ScrollUp => {
-                            if self.scroll_offset > 0 {
-                                self.scroll_offset -= 1;
-                                redraw(&mut terminal, &positions, self.scroll_offset)?;
-                            }
-                            info!("scroll up: {}", self.scroll_offset);
-                        }
-                        UiMessage::ScrollDown => {
-                            if self.scroll_offset < positions.len() - 1 {
-                                self.scroll_offset += 1;
-                                redraw(&mut terminal, &positions, self.scroll_offset)?;
-                            }
-
-                            info!("scroll down: {}", self.scroll_offset);
-                        }
-                        UiMessage::UpdatePositions(new_positions) => {
-                            info!("update positions in UI");
-                            positions = new_positions;
-                            redraw(&mut terminal, &positions, self.scroll_offset)?;
-                        }
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                UiMessage::Quit => break,
+                UiMessage::ScrollUp => {
+                    if self.scroll_offset > 0 {
+                        self.scroll_offset -= 1;
+                        redraw(&mut terminal, &positions, self.scroll_offset)?;
                     }
                 }
-                // 处理定时更新
-                _ = interval_timer.tick() => {
-                    match self.get_positions().await {
-                        Ok(raw_positions) => {
-                            let mut position_infos = vec![];
-                            for (pubkey, position) in raw_positions {
-                                debug!("position: {}, {:#?}", pubkey, position);
-                                info!("fetch position: {}, lb_pair: {}", pubkey, position.lb_pair);
-                                if let Ok(position_info) = self.get_info(pubkey, position).await {
-                                    if stop_loss {
-                                        let _ = self.stop_loss(position_info.clone()).await;
-                                    }
-                                    position_infos.push(position_info);
-                                }
-                            }
-                            position_infos.sort_by(|a, b| b.last_updated_at.cmp(&a.last_updated_at));
-                            positions = position_infos;
-                            redraw(&mut terminal, &positions, self.scroll_offset)?;
-                        }
-                        Err(e) => {
-                            error!("Error updating positions: {}", e);
-                        }
+                UiMessage::ScrollDown => {
+                    if self.scroll_offset < positions.len().saturating_sub(1) {
+                        self.scroll_offset += 1;
+                        redraw(&mut terminal, &positions, self.scroll_offset)?;
                     }
+                }
+                UiMessage::UpdatePositions(new_positions) => {
+                    positions = new_positions;
+                    redraw(&mut terminal, &positions, self.scroll_offset)?;
                 }
             }
         }
+
         // 清理终端
         disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
 
-        // 等待输入处理任务结束
-        let _ = input_handle.await;
+        // 取消所有任务
+        input_handle.abort();
+        update_handle.abort();
 
         Ok(())
     }
