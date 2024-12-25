@@ -17,10 +17,11 @@ rand = "0.8.5"
 anchor-client = { version = "0.28.0", features = ["async"] }
 anchor-lang = { version = "0.28.0", features = ["event-cpi"] }
 anchor-spl = "0.28.0"
-
 #lb_clmm = { git = "https://github.com/MeteoraAg/dlmm-sdk.git" }
 lb_clmm = { path = "./programs/lb_clmm" }
+commons = { path = "./commons" }
 solana-account-decoder = "1.14.0"
+spl-associated-token-account = "1"
 bytemuck = { version = "1.12.3", features = ["derive", "min_const_generics"] }
 rust_decimal = { version = "1.36.0", features = ["maths"] }
 ratatui = "0.29.0"

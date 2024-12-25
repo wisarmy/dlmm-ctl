@@ -3,10 +3,10 @@ use std::{io::stdout, sync::Arc, time::Duration};
 use anchor_client::{
     anchor_lang::Space,
     solana_client::{
-        rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig},
+        rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig},
         rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
     },
-    solana_sdk::{pubkey::Pubkey, signature::Keypair},
+    solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Keypair},
     Program,
 };
 use anyhow::Result;
@@ -24,9 +24,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
 use crate::{
+    instructions::close_position::close_position,
     pair::{self, get_pair},
     parser::parse_position_data,
-    position_ui::UiMessage,
 };
 
 pub struct PositionManager<'a> {
@@ -85,6 +85,7 @@ impl<'a> PositionManager<'a> {
     pub async fn get_info(&self, pubkey: Pubkey, position: PositionV2) -> Result<PositionInfo> {
         // get pair
         let pair_info = get_pair(position.lb_pair, self.program).await?;
+        debug!("{:#?}", pair_info);
         let lower_bin_price = pair::caculate_bin_price(
             pair_info.bin_step,
             position.lower_bin_id,
@@ -101,6 +102,8 @@ impl<'a> PositionManager<'a> {
         let position_info = PositionInfo {
             pubkey,
             lb_pair: position.lb_pair,
+            token_x_mint: pair_info.token_x_mint,
+            token_y_mint: pair_info.token_y_mint,
             lower_bin_id: position.lower_bin_id,
             lower_bin_price,
             upper_bin_id: position.upper_bin_id,
@@ -113,10 +116,17 @@ impl<'a> PositionManager<'a> {
         Ok(position_info)
     }
     /// stop loss strategy
-    pub async fn stop_loss(&self, position_info: PositionInfo) -> Result<()> {
+    pub async fn stop_loss(
+        &self,
+        position_info: PositionInfo,
+        tx: &mpsc::Sender<UiMessage>,
+    ) -> Result<()> {
         if position_info.active_bin_price < position_info.lower_bin_price {
-            info!("stop loss triggered, sell all");
-            // TODO: sell all
+            info!("stop loss triggered: {}", position_info.pubkey);
+            tx.send(UiMessage::Position(PositionMessage::Close(
+                position_info.pubkey,
+            )))
+            .await?;
         }
         Ok(())
     }
@@ -157,11 +167,11 @@ impl<'a> PositionManager<'a> {
         });
 
         // 创建数据更新任务
-        let program = self.program.clone();
+        let program_clone = self.program.clone();
         let wallet = self.wallet;
         let update_handle = tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval);
-            let manager = PositionManager::new(&program, wallet);
+            let manager = PositionManager::new(&program_clone, wallet);
 
             loop {
                 interval_timer.tick().await;
@@ -182,7 +192,8 @@ impl<'a> PositionManager<'a> {
                             );
                             if let Ok(position_info) = manager.get_info(pubkey, position).await {
                                 if stop_loss {
-                                    let _ = manager.stop_loss(position_info.clone()).await;
+                                    let _ =
+                                        manager.stop_loss(position_info.clone(), &update_tx).await;
                                 }
                                 position_infos.push(position_info);
                             }
@@ -231,6 +242,22 @@ impl<'a> PositionManager<'a> {
                     positions = new_positions;
                     redraw(&mut terminal, &positions, self.scroll_offset)?;
                 }
+                UiMessage::Position(PositionMessage::Close(position)) => {
+                    info!("Processing close position request for {}", position);
+                    let commitment_config = CommitmentConfig::confirmed();
+                    let transaction_config = RpcSendTransactionConfig {
+                        skip_preflight: false,
+                        preflight_commitment: Some(commitment_config.commitment),
+                        encoding: None,
+                        max_retries: None,
+                        min_context_slot: None,
+                    };
+
+                    if let Err(e) = close_position(position, self.program, transaction_config).await
+                    {
+                        error!("Failed to close position {}: {}", position, e);
+                    }
+                }
             }
         }
 
@@ -251,6 +278,8 @@ impl<'a> PositionManager<'a> {
 pub struct PositionInfo {
     pub pubkey: Pubkey,
     pub lb_pair: Pubkey,
+    pub token_x_mint: Pubkey,
+    pub token_y_mint: Pubkey,
     pub lower_bin_id: i32,
     pub lower_bin_price: Decimal,
     pub upper_bin_id: i32,
@@ -258,4 +287,17 @@ pub struct PositionInfo {
     pub active_bin_id: i32,
     pub active_bin_price: Decimal,
     pub last_updated_at: i64,
+}
+
+#[derive(Debug)]
+pub enum PositionMessage {
+    Close(Pubkey),
+}
+
+pub enum UiMessage {
+    Quit,
+    ScrollUp,
+    ScrollDown,
+    UpdatePositions(Vec<PositionInfo>),
+    Position(PositionMessage),
 }

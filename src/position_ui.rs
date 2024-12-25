@@ -9,13 +9,6 @@ use ratatui::{
     Terminal,
 };
 
-pub enum UiMessage {
-    Quit,
-    ScrollUp,
-    ScrollDown,
-    UpdatePositions(Vec<PositionInfo>),
-}
-
 impl<'a> PositionManager<'a> {
     // 添加滚动控制方法
     pub fn scroll_up(&mut self) {
