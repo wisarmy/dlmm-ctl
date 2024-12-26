@@ -131,9 +131,7 @@ impl<'a> PositionManager<'a> {
         position_info: PositionInfo,
         _tx: &mpsc::Sender<UiMessage>,
     ) -> Result<()> {
-        if position_info.active_bin_price < position_info.lower_bin_price
-            || &position_info.lb_pair.to_string() == "Cdiypn1Ro8UwQu1ctKTcTmFae1dk6hZdvZqvpembsjnw"
-        {
+        if position_info.active_bin_price < position_info.lower_bin_price {
             let insert_result = self
                 .db
                 .position
