@@ -94,8 +94,6 @@ pub fn parse_bin_data(data: &[u8]) -> Result<BinArray> {
         T::try_from_slice(data).map_err(anyhow::Error::from)
     }
 
-    println!("data len {}", data.len());
-
     let start = 8; // 跳过discriminator
 
     let index: i64 = parse_slice(&data[start..start + 8])?;

@@ -6,9 +6,10 @@ use anchor_lang::prelude::Pubkey;
 use anyhow::*;
 use lb_clmm::accounts;
 use lb_clmm::instruction;
-use lb_clmm::state::position::Position;
 use lb_clmm::utils::pda::derive_event_authority_pda;
 use std::ops::Deref;
+
+use crate::program_adapter;
 
 use super::utils::get_bin_arrays_for_position;
 
@@ -17,8 +18,13 @@ pub async fn close_position<C: Deref<Target = impl Signer> + Clone>(
     program: &Program<C>,
     transaction_config: RpcSendTransactionConfig,
 ) -> Result<()> {
-    let position_state: Position = program.account(position).await?;
-    let [bin_array_lower, bin_array_upper] = get_bin_arrays_for_position(program, position).await?;
+    // let position_state: Position = program.account(position).await?;
+    let position_state = program_adapter::get_position(position, program).await?;
+    let [bin_array_lower, bin_array_upper] = get_bin_arrays_for_position(program, position)
+        .await
+        .inspect_err(|err| {
+        tracing::warn!("get_bin_arrays_for_position err: {}", err);
+    })?;
 
     let (event_authority, _bump) = derive_event_authority_pda();
 
@@ -35,16 +41,18 @@ pub async fn close_position<C: Deref<Target = impl Signer> + Clone>(
 
     let ix = instruction::ClosePosition {};
     let compute_budget_ix = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
+    let compute_budget_ix_price = ComputeBudgetInstruction::set_compute_unit_price(50_000);
 
     let request_builder = program.request();
     let signature = request_builder
         .instruction(compute_budget_ix)
+        .instruction(compute_budget_ix_price)
         .accounts(accounts)
         .args(ix)
         .send_with_spinner_and_config(transaction_config)
         .await;
 
-    println!("Close position. Signature: {:#?}", signature);
+    tracing::info!("Close position. Signature: {:#?}", signature);
 
     signature?;
 

@@ -8,7 +8,7 @@ use anchor_client::solana_sdk::compute_budget::ComputeBudgetInstruction;
 use anchor_client::solana_sdk::sysvar::SysvarId;
 use anchor_client::{solana_sdk::pubkey::Pubkey, solana_sdk::signer::Signer, Program};
 use anchor_lang::solana_program::instruction::AccountMeta;
-use anchor_lang::AccountDeserialize;
+// use anchor_lang::AccountDeserialize;
 use anchor_spl::associated_token::get_associated_token_address;
 
 use anyhow::*;
@@ -21,6 +21,9 @@ use lb_clmm::state::bin::BinArray;
 use lb_clmm::state::bin_array_bitmap_extension::BinArrayBitmapExtension;
 use lb_clmm::state::lb_pair::LbPair;
 use lb_clmm::utils::pda::*;
+
+use crate::instructions::utils::get_or_create_ata;
+use crate::parser::parse_bin_data;
 
 #[derive(Debug)]
 pub struct SwapExactInParameters {
@@ -54,6 +57,22 @@ pub async fn swap<C: Deref<Target = impl Signer> + Clone>(
         )
     };
 
+    get_or_create_ata(
+        program,
+        transaction_config,
+        lb_pair_state.token_x_mint,
+        program.payer(),
+    )
+    .await?;
+
+    get_or_create_ata(
+        program,
+        transaction_config,
+        lb_pair_state.token_y_mint,
+        program.payer(),
+    )
+    .await?;
+
     let (bitmap_extension_key, _bump) = derive_bin_array_bitmap_extension(lb_pair);
 
     let bitmap_extension = program
@@ -79,7 +98,8 @@ pub async fn swap<C: Deref<Target = impl Signer> + Clone>(
             let account = account?;
             Some((
                 key,
-                BinArray::try_deserialize(&mut account.data.as_ref()).ok()?,
+                parse_bin_data(&mut account.data.as_ref()).ok()?,
+                // BinArray::try_deserialize(&mut account.data.as_ref()).ok()?,
             ))
         })
         .collect::<Option<HashMap<Pubkey, BinArray>>>()
@@ -142,17 +162,19 @@ pub async fn swap<C: Deref<Target = impl Signer> + Clone>(
         .collect::<Vec<_>>();
 
     let compute_budget_ix = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
+    let compute_budget_ix_price = ComputeBudgetInstruction::set_compute_unit_price(50_000);
 
     let request_builder = program.request();
     let signature = request_builder
         .instruction(compute_budget_ix)
+        .instruction(compute_budget_ix_price)
         .accounts(accounts)
         .accounts(remaining_accounts)
         .args(ix)
         .send_with_spinner_and_config(transaction_config)
         .await;
 
-    println!("Swap. Signature: {:#?}", signature);
+    tracing::info!("Swap. Signature: {:#?}", signature);
 
     signature?;
 

@@ -1,4 +1,4 @@
-use std::{io::stdout, sync::Arc, time::Duration};
+use std::{io::stdout, str::FromStr, sync::Arc, time::Duration};
 
 use anchor_client::{
     anchor_lang::Space,
@@ -24,23 +24,33 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
 use crate::{
-    instructions::close_position::close_position,
+    db::{Database, PositionStatus},
+    instructions::{
+        claim_fee::claim_fee,
+        close_position::close_position,
+        remove_liquidity::remove_all_liquidity,
+        swap_exact_in::{self, SwapExactInParameters},
+    },
     pair::{self, get_pair},
     parser::parse_position_data,
+    position_process::process_positions,
+    token,
 };
 
 pub struct PositionManager<'a> {
     program: &'a Arc<Program<Arc<Keypair>>>,
     wallet: Pubkey,
     pub scroll_offset: usize,
+    db: Database,
 }
 
 impl<'a> PositionManager<'a> {
-    pub fn new(program: &'a Arc<Program<Arc<Keypair>>>, wallet: Pubkey) -> Self {
+    pub fn new(program: &'a Arc<Program<Arc<Keypair>>>, wallet: Pubkey, db: Database) -> Self {
         Self {
             program,
             wallet,
             scroll_offset: 0,
+            db,
         }
     }
 
@@ -119,14 +129,29 @@ impl<'a> PositionManager<'a> {
     pub async fn stop_loss(
         &self,
         position_info: PositionInfo,
-        tx: &mpsc::Sender<UiMessage>,
+        _tx: &mpsc::Sender<UiMessage>,
     ) -> Result<()> {
-        if position_info.active_bin_price < position_info.lower_bin_price {
-            info!("stop loss triggered: {}", position_info.pubkey);
-            tx.send(UiMessage::Position(PositionMessage::Close(
-                position_info.pubkey,
-            )))
-            .await?;
+        if position_info.active_bin_price < position_info.lower_bin_price
+            || &position_info.lb_pair.to_string() == "Cdiypn1Ro8UwQu1ctKTcTmFae1dk6hZdvZqvpembsjnw"
+        {
+            let insert_result = self
+                .db
+                .position
+                .insert_stop_loss(
+                    &position_info.pubkey,
+                    &position_info.lb_pair,
+                    &position_info.token_x_mint,
+                    &position_info.token_y_mint,
+                )
+                .await?;
+            if insert_result {
+                info!("stop loss triggered: {}", position_info.pubkey);
+            }
+
+            // tx.send(UiMessage::Position(PositionMessage::Close(
+            //     position_info.pubkey,
+            // )))
+            // .await?;
         }
         Ok(())
     }
@@ -169,9 +194,10 @@ impl<'a> PositionManager<'a> {
         // 创建数据更新任务
         let program_clone = self.program.clone();
         let wallet = self.wallet;
+        let db = self.db.clone();
         let update_handle = tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval);
-            let manager = PositionManager::new(&program_clone, wallet);
+            let manager = PositionManager::new(&program_clone, wallet, db);
 
             loop {
                 interval_timer.tick().await;
@@ -215,6 +241,20 @@ impl<'a> PositionManager<'a> {
             }
         });
 
+        let program_clone = self.program.clone();
+        let update_tx_clone = tx.clone();
+        let db_clone = self.db.clone();
+
+        let position_process_handler = tokio::spawn(async move {
+            process_positions(
+                &program_clone,
+                db_clone,
+                Duration::from_secs(60),
+                &update_tx_clone,
+            )
+            .await
+        });
+
         let mut positions = vec![];
 
         // 封装重绘UI的函数
@@ -242,20 +282,161 @@ impl<'a> PositionManager<'a> {
                     positions = new_positions;
                     redraw(&mut terminal, &positions, self.scroll_offset)?;
                 }
-                UiMessage::Position(PositionMessage::Close(position)) => {
-                    info!("Processing close position request for {}", position);
-                    let commitment_config = CommitmentConfig::confirmed();
-                    let transaction_config = RpcSendTransactionConfig {
-                        skip_preflight: false,
-                        preflight_commitment: Some(commitment_config.commitment),
-                        encoding: None,
-                        max_retries: None,
-                        min_context_slot: None,
-                    };
+                UiMessage::Position(PositionMessage::RemoveLiquidity(position, lb_pair)) => {
+                    if let Err(err) = async {
+                        info!(
+                            "Processing remove liquidity position request for {}",
+                            position
+                        );
+                        let commitment_config = CommitmentConfig::confirmed();
+                        let transaction_config = RpcSendTransactionConfig {
+                            skip_preflight: false,
+                            preflight_commitment: Some(commitment_config.commitment),
+                            encoding: None,
+                            max_retries: None,
+                            min_context_slot: None,
+                        };
 
-                    if let Err(e) = close_position(position, self.program, transaction_config).await
+                        remove_all_liquidity(lb_pair, position, self.program, transaction_config)
+                            .await?;
+
+                        if let Err(err) = self
+                            .db
+                            .position
+                            .update_status(&position.to_string(), PositionStatus::WaitClaimFees)
+                            .await
+                        {
+                            error!(
+                                "Failed to update status: {}: {:?}, err: {}",
+                                position,
+                                PositionStatus::WaitClaimFees,
+                                err
+                            )
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    .await
                     {
-                        error!("Failed to close position {}: {}", position, e);
+                        error!("Failed to close position {}: {}", position, err);
+                    }
+                }
+                UiMessage::Position(PositionMessage::ClaimFees(position)) => {
+                    if let Err(err) = async {
+                        info!("Processing claim fee position request for {}", position);
+                        let commitment_config = CommitmentConfig::confirmed();
+                        let transaction_config = RpcSendTransactionConfig {
+                            skip_preflight: false,
+                            preflight_commitment: Some(commitment_config.commitment),
+                            encoding: None,
+                            max_retries: None,
+                            min_context_slot: None,
+                        };
+
+                        claim_fee(position, self.program, transaction_config).await?;
+
+                        if let Err(err) = self
+                            .db
+                            .position
+                            .update_status(&position.to_string(), PositionStatus::WaitClose)
+                            .await
+                        {
+                            error!(
+                                "Failed to update status: {}: {:?}, err: {}",
+                                position,
+                                PositionStatus::WaitClose,
+                                err
+                            )
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    .await
+                    {
+                        error!("Failed to close position {}: {}", position, err);
+                    }
+                }
+                UiMessage::Position(PositionMessage::Close(position)) => {
+                    if let Err(err) = async {
+                        info!("Processing close position request for {}", position);
+                        let commitment_config = CommitmentConfig::confirmed();
+                        let transaction_config = RpcSendTransactionConfig {
+                            skip_preflight: false,
+                            preflight_commitment: Some(commitment_config.commitment),
+                            encoding: None,
+                            max_retries: None,
+                            min_context_slot: None,
+                        };
+
+                        close_position(position, self.program, transaction_config).await?;
+
+                        if let Err(err) = self
+                            .db
+                            .position
+                            .update_status(&position.to_string(), PositionStatus::WaitSellAll)
+                            .await
+                        {
+                            error!(
+                                "Failed to update status: {}: {:?}, err: {}",
+                                position,
+                                PositionStatus::WaitSellAll,
+                                err
+                            )
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    .await
+                    {
+                        error!("Failed to close position {}: {}", position, err);
+                    }
+                }
+                UiMessage::Position(PositionMessage::SellAll(position)) => {
+                    if let Err(err) = async {
+                        info!("Processing sell all position request for {}", position);
+                        let position_data = self.db.position.get(&position).await?;
+
+                        let commitment_config = CommitmentConfig::confirmed();
+                        let transaction_config = RpcSendTransactionConfig {
+                            skip_preflight: false,
+                            preflight_commitment: Some(commitment_config.commitment),
+                            encoding: None,
+                            max_retries: None,
+                            min_context_slot: None,
+                        };
+                        // query token account
+                        let x_account = token::token_account(
+                            &self.program.async_rpc(),
+                            &self.wallet,
+                            Pubkey::from_str(&position_data.token_x_mint)?,
+                        )
+                        .await?;
+
+                        let amount_in = u64::from_str(&x_account.amount)?;
+                        let params = SwapExactInParameters {
+                            amount_in,
+                            lb_pair: Pubkey::from_str(&position_data.lb_pair)?,
+                            swap_for_y: true,
+                        };
+                        info!("swap: {:#?}", params);
+
+                        swap_exact_in::swap(params, self.program, transaction_config).await?;
+
+                        if let Err(err) = self
+                            .db
+                            .position
+                            .update_status(&position.to_string(), PositionStatus::Terminate)
+                            .await
+                        {
+                            error!(
+                                "Failed to update status: {}: {:?}, err: {}",
+                                position,
+                                PositionStatus::Terminate,
+                                err
+                            )
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    .await
+                    {
+                        error!("Failed to sell all position {}: {}", position, err);
                     }
                 }
             }
@@ -269,6 +450,7 @@ impl<'a> PositionManager<'a> {
         // 取消所有任务
         input_handle.abort();
         update_handle.abort();
+        position_process_handler.abort();
 
         Ok(())
     }
@@ -291,7 +473,10 @@ pub struct PositionInfo {
 
 #[derive(Debug)]
 pub enum PositionMessage {
+    ClaimFees(Pubkey),
+    RemoveLiquidity(Pubkey, Pubkey),
     Close(Pubkey),
+    SellAll(Pubkey),
 }
 
 pub enum UiMessage {

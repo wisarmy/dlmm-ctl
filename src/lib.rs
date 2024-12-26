@@ -7,13 +7,17 @@ use rand::seq::SliceRandom;
 use std::{env, sync::Arc};
 use tracing::debug;
 
+pub mod db;
 pub mod instructions;
 pub mod logger;
 pub mod math;
 pub mod pair;
 pub mod parser;
 pub mod position;
+pub mod position_process;
 pub mod position_ui;
+pub mod program_adapter;
+pub mod token;
 
 pub fn get_random_rpc_url() -> Result<(String, String)> {
     let cluster_urls = env::var("RPC_ENDPOINTS")?
