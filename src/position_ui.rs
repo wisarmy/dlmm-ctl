@@ -122,6 +122,10 @@ impl<'a> PositionManager<'a> {
 
         let content = vec![
             Line::from(vec![
+                Span::styled(
+                    format!("{} ", info.pair_name.as_deref().unwrap_or_default()),
+                    Style::default().fg(Color::Cyan),
+                ),
                 Span::raw(format!("Position: {} ", info.pubkey)),
                 Span::raw(format!("Pair: {}", info.lb_pair)),
             ]),

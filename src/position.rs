@@ -9,6 +9,7 @@ use anchor_client::{
     solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Keypair},
     Program,
 };
+use anchor_spl::token::spl_token;
 use anyhow::Result;
 use chrono::{DateTime, Local};
 use crossterm::{
@@ -21,7 +22,7 @@ use ratatui::{prelude::CrosstermBackend, Terminal};
 use rust_decimal::Decimal;
 use solana_account_decoder::UiAccountEncoding;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     db::{Database, PositionStatus},
@@ -31,7 +32,7 @@ use crate::{
         remove_liquidity::remove_all_liquidity,
         swap_exact_in::{self, SwapExactInParameters},
     },
-    pair::{self, get_pair},
+    pair::{self, get_pair, get_pair_api_info},
     parser::parse_position_data,
     position_process::process_positions,
     token,
@@ -99,6 +100,8 @@ impl<'a> PositionManager<'a> {
     pub async fn get_info(&self, pubkey: Pubkey, position: PositionV2) -> Result<PositionInfo> {
         // get pair
         let pair_info = get_pair(position.lb_pair, self.program).await?;
+        // get pair api info
+        let pair_api_info = get_pair_api_info(&position.lb_pair.to_string()).await.ok();
         debug!("{:#?}", pair_info);
         let lower_bin_price = pair::caculate_bin_price(
             pair_info.bin_step,
@@ -116,6 +119,7 @@ impl<'a> PositionManager<'a> {
         let position_info = PositionInfo {
             pubkey,
             lb_pair: position.lb_pair,
+            pair_name: pair_api_info.map(|info| info.name),
             token_x_mint: pair_info.token_x_mint,
             token_y_mint: pair_info.token_y_mint,
             lower_bin_id: position.lower_bin_id,
@@ -226,11 +230,22 @@ impl<'a> PositionManager<'a> {
                                     .unwrap_or_else(|| "invalid timestamp".to_string())
                             );
                             if let Ok(position_info) = manager.get_info(pubkey, position).await {
-                                if stop_loss {
-                                    let _ =
-                                        manager.stop_loss(position_info.clone(), &update_tx).await;
+                                // 只处理token_y_mint为wsol的position
+                                if position_info.token_y_mint == spl_token::native_mint::id() {
+                                    if stop_loss {
+                                        let _ = manager
+                                            .stop_loss(position_info.clone(), &update_tx)
+                                            .await;
+                                    }
+                                    position_infos.push(position_info);
+                                } else {
+                                    warn!(
+                                        "Invalid position: {}, lb_pair: {}, token_y_mint is not {}",
+                                        pubkey,
+                                        position_info.lb_pair,
+                                        spl_token::native_mint::id()
+                                    );
                                 }
-                                position_infos.push(position_info);
                             }
                         }
                         position_infos.sort_by(|a, b| b.last_updated_at.cmp(&a.last_updated_at));
@@ -490,6 +505,7 @@ impl<'a> PositionManager<'a> {
 pub struct PositionInfo {
     pub pubkey: Pubkey,
     pub lb_pair: Pubkey,
+    pub pair_name: Option<String>,
     pub token_x_mint: Pubkey,
     pub token_y_mint: Pubkey,
     pub lower_bin_id: i32,

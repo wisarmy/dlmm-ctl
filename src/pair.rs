@@ -157,3 +157,21 @@ pub async fn get_pair<C: Deref<Target = impl Signer> + Clone>(
         total_fee_rate,
     })
 }
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PairApiInfo {
+    pub address: String,
+    pub name: String,
+    pub mint_x: String,
+    pub mint_y: String,
+    pub current_price: f64,
+}
+
+pub async fn get_pair_api_info(pair_address: &str) -> Result<PairApiInfo> {
+    let url = format!("https://app.meteora.ag/clmm-api/pair/{}", pair_address);
+
+    let client = reqwest::Client::new();
+    let response = client.get(&url).send().await?.json::<PairApiInfo>().await?;
+
+    Ok(response)
+}
