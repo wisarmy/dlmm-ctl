@@ -40,8 +40,10 @@ use crate::{
 pub struct PositionManager<'a> {
     program: &'a Arc<Program<Arc<Keypair>>>,
     wallet: Pubkey,
-    pub scroll_offset: usize,
     db: Database,
+    pub scroll_offset: usize,
+    pub status_message: String,
+    pub current_positions: Vec<PositionInfo>,
 }
 
 impl<'a> PositionManager<'a> {
@@ -49,8 +51,10 @@ impl<'a> PositionManager<'a> {
         Self {
             program,
             wallet,
-            scroll_offset: 0,
             db,
+            scroll_offset: 0,
+            status_message: "".to_string(),
+            current_positions: vec![],
         }
     }
 
@@ -145,11 +149,6 @@ impl<'a> PositionManager<'a> {
             if insert_result {
                 info!("stop loss triggered: {}", position_info.pubkey);
             }
-
-            // tx.send(UiMessage::Position(PositionMessage::Close(
-            //     position_info.pubkey,
-            // )))
-            // .await?;
         }
         Ok(())
     }
@@ -161,7 +160,7 @@ impl<'a> PositionManager<'a> {
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
-        Self::draw_loading(&mut terminal)?;
+        Self::draw_loading(&mut terminal, "Loading positions...")?;
 
         // 创建用于UI控制的channel
         let (tx, mut rx) = mpsc::channel(32);
@@ -199,14 +198,26 @@ impl<'a> PositionManager<'a> {
 
             loop {
                 interval_timer.tick().await;
-                info!("fetching positions for {}", wallet);
+                let _ = update_tx
+                    .send(UiMessage::UpdateStatus(format!(
+                        "Fetching positions for {}",
+                        wallet
+                    )))
+                    .await;
+                info!("Fetching positions for {}", wallet);
                 match manager.get_positions().await {
                     Ok(raw_positions) => {
                         let mut position_infos = vec![];
                         for (pubkey, position) in raw_positions {
-                            debug!("position: {}, {:#?}", pubkey, position);
+                            let _ = update_tx
+                                .send(UiMessage::UpdateStatus(format!(
+                                    "Fetching position: {}",
+                                    pubkey
+                                )))
+                                .await;
+                            debug!("Found position: {}, {:#?}", pubkey, position);
                             info!(
-                                "fetching info: position: {}, lb_pair: {}, last_updated: {}",
+                                "Fetching position: {}, lb_pair: {}, last_updated: {}",
                                 pubkey,
                                 position.lb_pair,
                                 DateTime::from_timestamp(position.last_updated_at, 0)
@@ -253,32 +264,53 @@ impl<'a> PositionManager<'a> {
             .await
         });
 
-        let mut positions = vec![];
-
-        // 封装重绘UI的函数
-        let redraw = |terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-                      positions: &[PositionInfo],
-                      scroll_offset: usize|
-         -> Result<()> { Self::draw_ui(terminal, positions, scroll_offset) };
-
         while let Some(msg) = rx.recv().await {
             match msg {
                 UiMessage::Quit => break,
                 UiMessage::ScrollUp => {
-                    if self.scroll_offset > 0 {
-                        self.scroll_offset -= 1;
-                        redraw(&mut terminal, &positions, self.scroll_offset)?;
+                    if let Err(err) = {
+                        if self.scroll_offset > 0 {
+                            self.scroll_offset -= 1;
+                            self.draw_ui(&mut terminal)?;
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    } {
+                        error!("Failed to update UI: {}", err);
                     }
                 }
                 UiMessage::ScrollDown => {
-                    if self.scroll_offset < positions.len().saturating_sub(1) {
-                        self.scroll_offset += 1;
-                        redraw(&mut terminal, &positions, self.scroll_offset)?;
+                    if let Err(err) = {
+                        if self.scroll_offset < self.current_positions.len().saturating_sub(1) {
+                            self.scroll_offset += 1;
+                            self.draw_ui(&mut terminal)?;
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    } {
+                        error!("Failed to update UI: {}", err);
+                    }
+                }
+                UiMessage::UpdateStatus(msg) => {
+                    if let Err(err) = {
+                        if self.current_positions.is_empty() {
+                            Self::draw_loading(&mut terminal, msg)?;
+                        } else {
+                            self.status_message = msg;
+                            self.draw_ui(&mut terminal)?;
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    } {
+                        error!("Failed to update UI: {}", err);
                     }
                 }
                 UiMessage::UpdatePositions(new_positions) => {
-                    positions = new_positions;
-                    redraw(&mut terminal, &positions, self.scroll_offset)?;
+                    if let Err(err) = {
+                        self.current_positions = new_positions;
+                        self.status_message = format!("Last Updated: {}", Local::now());
+                        self.draw_ui(&mut terminal)?;
+                        Ok::<(), anyhow::Error>(())
+                    } {
+                        error!("Failed to update UI: {}", err);
+                    }
                 }
                 UiMessage::Position(PositionMessage::RemoveLiquidity(position, lb_pair)) => {
                     if let Err(err) = async {
@@ -481,6 +513,7 @@ pub enum UiMessage {
     Quit,
     ScrollUp,
     ScrollDown,
+    UpdateStatus(String),
     UpdatePositions(Vec<PositionInfo>),
     Position(PositionMessage),
 }

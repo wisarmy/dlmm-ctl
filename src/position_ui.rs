@@ -2,7 +2,7 @@ use crate::position::{PositionInfo, PositionManager};
 use anyhow::Result;
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -22,11 +22,11 @@ impl<'a> PositionManager<'a> {
             self.scroll_offset += 1;
         }
     }
+
     // 添加绘制界面的方法
     pub fn draw_ui(
+        &mut self,
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-        position_infos: &[PositionInfo],
-        scroll_offset: usize,
     ) -> Result<()> {
         terminal.draw(|f| {
             let size = f.area();
@@ -36,9 +36,10 @@ impl<'a> PositionManager<'a> {
             let positions_per_page = visible_height / 6; // 每个 position 占 6 行高度
 
             // 获取当前可见的 position 切片
-            let visible_positions = position_infos
+            let visible_positions = self
+                .current_positions
                 .iter()
-                .skip(scroll_offset)
+                .skip(self.scroll_offset)
                 .take(positions_per_page);
 
             let chunks = Layout::default()
@@ -54,15 +55,33 @@ impl<'a> PositionManager<'a> {
                 )
                 .split(size);
 
-            // 绘制标题（包含滚动信息）
-            let title = Paragraph::new(format!(
+            // 将标题区域分成左右两部分
+            let title_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(50), // 左侧标题
+                    Constraint::Percentage(50), // 右侧时间
+                ])
+                .split(chunks[0]);
+
+            // 左侧标题
+            let title_text = format!(
                 "Position Monitor ({}/{} positions)",
-                scroll_offset + 1,
-                position_infos.len()
-            ))
-            .style(Style::default().fg(Color::Cyan))
-            .block(Block::default().borders(Borders::ALL));
-            f.render_widget(title, chunks[0]);
+                (self.scroll_offset + 1).min(self.current_positions.len()),
+                self.current_positions.len()
+            );
+            let title = Paragraph::new(title_text)
+                .style(Style::default().fg(Color::Cyan))
+                .block(Block::default().borders(Borders::LEFT | Borders::BOTTOM | Borders::TOP));
+
+            // 右侧状态信息
+            let status_message = Paragraph::new(format!("{}", self.status_message))
+                .style(Style::default().fg(Color::Yellow))
+                .alignment(Alignment::Right)
+                .block(Block::default().borders(Borders::RIGHT | Borders::BOTTOM | Borders::TOP));
+
+            f.render_widget(title, title_chunks[0]);
+            f.render_widget(status_message, title_chunks[1]);
 
             // 为可见的 positions 创建显示区域
             let position_chunks = Layout::default()
@@ -150,9 +169,12 @@ impl<'a> PositionManager<'a> {
         bar
     }
 
-    pub fn draw_loading(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    pub fn draw_loading(
+        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+        msg: impl Into<String>,
+    ) -> Result<()> {
         terminal.draw(|f| {
-            let loading = Paragraph::new("Loading positions...")
+            let loading = Paragraph::new(msg.into())
                 .style(Style::default().fg(Color::Yellow))
                 .block(Block::default().borders(Borders::ALL));
 

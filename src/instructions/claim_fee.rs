@@ -1,6 +1,7 @@
 use crate::program_adapter;
 
 use super::utils::{get_bin_arrays_for_position, get_or_create_ata};
+use anchor_client::solana_sdk::compute_budget::ComputeBudgetInstruction;
 use anchor_client::{
     solana_client::rpc_config::RpcSendTransactionConfig, solana_sdk::signer::Signer, Program,
 };
@@ -57,9 +58,13 @@ pub async fn claim_fee<C: Deref<Target = impl Signer> + Clone>(
     };
 
     let ix = instruction::ClaimFee {};
+    let compute_budget_ix = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
+    let compute_budget_ix_price = ComputeBudgetInstruction::set_compute_unit_price(50_000);
 
     let request_builder = program.request();
     let signature = request_builder
+        .instruction(compute_budget_ix)
+        .instruction(compute_budget_ix_price)
         .accounts(accounts)
         .args(ix)
         .send_with_spinner_and_config(transaction_config)
