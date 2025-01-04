@@ -127,23 +127,11 @@ impl<'a> PositionManager<'a> {
         let balance_line = if let Some((amount_x, amount_y, fee_x, fee_y)) = position_info.balance {
             Line::from(vec![
                 Span::raw("Current Balance: "),
-                Span::styled(
-                    format!("{}: {:.6} ", pair_names.0, amount_x),
-                    Color::Rgb(111, 97, 192),
-                ),
-                Span::styled(
-                    format!("{}: {:.6} ", pair_names.1, amount_y),
-                    Color::Rgb(6, 174, 212),
-                ),
+                Span::styled(format!("{}: {:.6} ", pair_names.0, amount_x), Color::Red),
+                Span::styled(format!("{}: {:.6} ", pair_names.1, amount_y), Color::Green),
                 Span::raw("Unclaimed Swap Fee: "),
-                Span::styled(
-                    format!("{}: {:.6} ", pair_names.0, fee_x),
-                    Color::Rgb(111, 97, 192),
-                ),
-                Span::styled(
-                    format!("{}: {:.6}", pair_names.1, fee_y),
-                    Color::Rgb(6, 174, 212),
-                ),
+                Span::styled(format!("{}: {:.6} ", pair_names.0, fee_x), Color::Red),
+                Span::styled(format!("{}: {:.6}", pair_names.1, fee_y), Color::Green),
             ])
         } else {
             Line::from(vec![Span::styled(
@@ -194,13 +182,13 @@ impl<'a> PositionManager<'a> {
         for i in 0..bar_width {
             let span = if i < position {
                 // 当前价格以下的区域
-                Span::styled("▐", Style::default().fg(Color::Rgb(6, 174, 212)))
+                Span::styled("▐", Style::default().fg(Color::Green))
             } else if i == position {
                 // 当前价格位置
                 Span::styled("▐", Style::default().fg(Color::Yellow))
             } else {
                 // 当前价格以上的区域
-                Span::styled("▐", Style::default().fg(Color::Rgb(111, 97, 192)))
+                Span::styled("▐", Style::default().fg(Color::Red))
             };
             bar.push(span);
         }
