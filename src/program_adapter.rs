@@ -3,10 +3,10 @@ use std::ops::Deref;
 use anchor_client::{solana_sdk::signer::Signer, Program};
 use anchor_lang::prelude::*;
 use anyhow::Result;
-use lb_clmm::state::position::PositionV2;
+use lb_clmm::state::{bin::BinArray, position::PositionV2};
 use tracing::error;
 
-use crate::parser::parse_position_data;
+use crate::parser::{parse_bin_data, parse_position_data};
 
 pub async fn get_position<C: Deref<Target = impl Signer> + Clone>(
     position: Pubkey,
@@ -23,4 +23,21 @@ pub async fn get_position<C: Deref<Target = impl Signer> + Clone>(
         error!("parse position data err: {}", err);
     })?;
     Ok(position)
+}
+
+pub async fn get_bin_array<C: Deref<Target = impl Signer> + Clone>(
+    bin_array: Pubkey,
+    program: &Program<C>,
+) -> Result<BinArray> {
+    let bin_data = program
+        .async_rpc()
+        .get_account_data(&bin_array)
+        .await
+        .inspect_err(|err| {
+            error!("get bin array account err: {}", err);
+        })?;
+    let bin_array = parse_bin_data(&bin_data).inspect_err(|err| {
+        error!("parse bin array data err: {}", err);
+    })?;
+    Ok(bin_array)
 }

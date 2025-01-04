@@ -1,4 +1,4 @@
-use crate::position::{PositionInfo, PositionManager};
+use crate::{position::PositionInfo, position_manager::PositionManager};
 use anyhow::Result;
 use ratatui::{
     backend::CrosstermBackend,
@@ -24,7 +24,7 @@ impl<'a> PositionManager<'a> {
     }
 
     // 添加绘制界面的方法
-    pub fn draw_ui(
+    pub async fn draw_ui(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     ) -> Result<()> {
@@ -33,7 +33,7 @@ impl<'a> PositionManager<'a> {
 
             // 计算可见区域能显示多少个 position
             let visible_height = size.height as usize - 7; // 减去标题和帮助区域的高度
-            let positions_per_page = visible_height / 6; // 每个 position 占 6 行高度
+            let positions_per_page = visible_height / 7; // 每个 position 占 6 行高度
 
             // 获取当前可见的 position 切片
             let visible_positions = self
@@ -89,14 +89,14 @@ impl<'a> PositionManager<'a> {
                 .constraints(
                     visible_positions
                         .clone()
-                        .map(|_| Constraint::Length(6))
+                        .map(|_| Constraint::Length(7))
                         .collect::<Vec<_>>(),
                 )
                 .split(chunks[1]);
 
             // 绘制可见的 positions
-            for (i, position) in visible_positions.enumerate() {
-                let pos_block = Self::render_position_block(position);
+            for (i, info) in visible_positions.enumerate() {
+                let pos_block = self.render_position_block(info);
                 f.render_widget(pos_block, position_chunks[i]);
             }
 
@@ -117,29 +117,64 @@ impl<'a> PositionManager<'a> {
     }
 
     // 渲染单个 position 信息块
-    fn render_position_block(info: &PositionInfo) -> Paragraph {
-        let price_bar = Self::create_price_bar(info);
+    fn render_position_block<'b>(&self, position_info: &'b PositionInfo) -> Paragraph<'b> {
+        let price_bar = Self::create_price_bar(position_info);
+
+        // 获取balance信息
+        let pair_names = position_info
+            .get_pair_names()
+            .unwrap_or(("X".to_string(), "Y".to_string()));
+        let balance_line = if let Some((amount_x, amount_y, fee_x, fee_y)) = position_info.balance {
+            Line::from(vec![
+                Span::raw("Current Balance: "),
+                Span::styled(
+                    format!("{}: {:.6} ", pair_names.0, amount_x),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(
+                    format!("{}: {:.6} ", pair_names.1, amount_y),
+                    Style::default().fg(Color::Blue),
+                ),
+                Span::raw("Unclaimed Swap Fee: "),
+                Span::styled(
+                    format!("{}: {:.6} ", pair_names.0, fee_x),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(
+                    format!("{}: {:.6}", pair_names.1, fee_y),
+                    Style::default().fg(Color::Blue),
+                ),
+            ])
+        } else {
+            Line::from(vec![Span::styled(
+                "Failed to get balance",
+                Style::default().fg(Color::Red),
+            )])
+        };
 
         let content = vec![
             Line::from(vec![
                 Span::styled(
-                    format!("{} ", info.pair_name.as_deref().unwrap_or_default()),
+                    format!(
+                        "{} ",
+                        position_info.pair_name.as_deref().unwrap_or_default()
+                    ),
                     Style::default().fg(Color::Cyan),
                 ),
-                Span::raw(format!("Position: {} ", info.pubkey)),
-                Span::raw(format!("Pair: {}", info.lb_pair)),
+                Span::raw(format!("Position: {} ", position_info.pubkey)),
+                Span::raw(format!("Pair: {}", position_info.lb_pair)),
             ]),
             Line::from(vec![Span::raw(format!(
                 "Price Range: {} - {}",
-                info.lower_bin_price, info.upper_bin_price
+                position_info.lower_bin_price, position_info.upper_bin_price
             ))]),
             Line::from(price_bar),
             Line::from(vec![Span::raw(format!(
                 "Current Price: {}",
-                info.active_bin_price
+                position_info.active_bin_price
             ))]),
+            balance_line,
         ];
-
         Paragraph::new(content).block(Block::default().borders(Borders::ALL))
     }
 

@@ -1,4 +1,3 @@
-pub mod check_my_balance;
 pub mod claim_fee;
 pub mod claim_reward;
 pub mod close_position;

@@ -15,7 +15,7 @@ use dlmm_ctl::{
     instructions::swap_exact_in::{self, SwapExactInParameters},
     logger,
     pair::get_pair,
-    position::PositionManager,
+    position_manager::PositionManager,
 };
 use tracing::{debug, error, info};
 
