@@ -129,20 +129,20 @@ impl<'a> PositionManager<'a> {
                 Span::raw("Current Balance: "),
                 Span::styled(
                     format!("{}: {:.6} ", pair_names.0, amount_x),
-                    Style::default().fg(Color::Green),
+                    Color::Rgb(111, 97, 192),
                 ),
                 Span::styled(
                     format!("{}: {:.6} ", pair_names.1, amount_y),
-                    Style::default().fg(Color::Blue),
+                    Color::Rgb(6, 174, 212),
                 ),
                 Span::raw("Unclaimed Swap Fee: "),
                 Span::styled(
                     format!("{}: {:.6} ", pair_names.0, fee_x),
-                    Style::default().fg(Color::Green),
+                    Color::Rgb(111, 97, 192),
                 ),
                 Span::styled(
                     format!("{}: {:.6}", pair_names.1, fee_y),
-                    Style::default().fg(Color::Blue),
+                    Color::Rgb(6, 174, 212),
                 ),
             ])
         } else {
@@ -193,14 +193,14 @@ impl<'a> PositionManager<'a> {
 
         for i in 0..bar_width {
             let span = if i < position {
-                // 当前价格以下的区域 - 蓝色
-                Span::styled("▐", Style::default().fg(Color::Blue))
+                // 当前价格以下的区域
+                Span::styled("▐", Style::default().fg(Color::Rgb(6, 174, 212)))
             } else if i == position {
-                // 当前价格位置 - 黑色
+                // 当前价格位置
                 Span::styled("▐", Style::default().fg(Color::Yellow))
             } else {
-                // 当前价格以上的区域 - 紫色
-                Span::styled("▐", Style::default().fg(Color::Magenta))
+                // 当前价格以上的区域
+                Span::styled("▐", Style::default().fg(Color::Rgb(111, 97, 192)))
             };
             bar.push(span);
         }
