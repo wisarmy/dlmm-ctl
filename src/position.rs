@@ -11,7 +11,10 @@ use lb_clmm::{
 };
 use rust_decimal::Decimal;
 
-use crate::{pair::PairInfo, program_adapter, types::bin_array_manager::BinArrayManager};
+use crate::{
+    pair::PairInfo, program_adapter, types::bin_array_manager::BinArrayManager,
+    utils::price::get_token_prices,
+};
 
 #[derive(Debug)]
 pub enum PositionMessage {
@@ -49,6 +52,8 @@ pub struct PositionInfo {
     pub active_bin_price: Decimal,
     pub last_updated_at: i64,
     pub balance: Option<(f64, f64, f64, f64)>,
+    pub token_x_price: Option<f64>,
+    pub token_y_price: Option<f64>,
 }
 
 impl PositionInfo {
@@ -130,5 +135,15 @@ impl PositionInfo {
         } else {
             None
         }
+    }
+
+    pub async fn with_price(&mut self) -> Result<()> {
+        let prices = get_token_prices(&[self.token_x_mint, self.token_y_mint]).await?;
+        let (x_price, y_price) = (prices[0].1, prices[1].1);
+
+        self.token_x_price = x_price;
+        self.token_y_price = y_price;
+
+        Ok(())
     }
 }

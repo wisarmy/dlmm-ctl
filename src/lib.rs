@@ -20,6 +20,7 @@ pub mod position_ui;
 pub mod program_adapter;
 pub mod token;
 pub mod types;
+pub mod utils;
 
 pub fn get_random_rpc_url() -> Result<(String, String)> {
     let cluster_urls = env::var("RPC_ENDPOINTS")?

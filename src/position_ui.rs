@@ -6,7 +6,7 @@ use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Terminal,
+    Frame, Terminal,
 };
 
 impl<'a> PositionManager<'a> {
@@ -64,12 +64,52 @@ impl<'a> PositionManager<'a> {
                 ])
                 .split(chunks[0]);
 
+            let (total_value, total_fee): (f64, f64) =
+                self.current_positions
+                    .iter()
+                    .fold((0.0, 0.0), |(value_acc, fee_acc), position| {
+                        let position_value = if let Some((amount_x, amount_y, fee_x, fee_y)) =
+                            position.balance
+                        {
+                            // calculate the total value of the current position
+                            let value =
+                                position.token_x_price.map_or(0.0, |price| amount_x * price)
+                                    + position.token_y_price.map_or(0.0, |price| amount_y * price);
+
+                            // calculate the total fee of the current position
+                            let fee = position.token_x_price.map_or(0.0, |price| fee_x * price)
+                                + position.token_y_price.map_or(0.0, |price| fee_y * price);
+
+                            (value, fee)
+                        } else {
+                            (0.0, 0.0)
+                        };
+
+                        (value_acc + position_value.0, fee_acc + position_value.1)
+                    });
+
             // 左侧标题
-            let title_text = format!(
-                "Position Monitor ({}/{} positions)",
-                (self.scroll_offset + 1).min(self.current_positions.len()),
-                self.current_positions.len()
-            );
+            let title_text = Line::from(vec![
+                Span::raw(format!(
+                    "Position Monitor ({}/{} positions) ",
+                    (self.scroll_offset + 1).min(self.current_positions.len()),
+                    self.current_positions.len()
+                )),
+                Span::styled(
+                    format!("${:.2}", total_value),
+                    Style::default().fg(Color::Blue),
+                ),
+                Span::raw(" + "),
+                Span::styled(
+                    format!("${:.2}", total_fee),
+                    Style::default().fg(Color::Magenta),
+                ),
+                Span::raw(" = "),
+                Span::styled(
+                    format!("${:.2}", total_value + total_fee),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]);
             let title = Paragraph::new(title_text)
                 .style(Style::default().fg(Color::Cyan))
                 .block(Block::default().borders(Borders::LEFT | Borders::BOTTOM | Borders::TOP));
@@ -89,15 +129,15 @@ impl<'a> PositionManager<'a> {
                 .constraints(
                     visible_positions
                         .clone()
-                        .map(|_| Constraint::Length(7))
+                        .map(|_| Constraint::Length(8))
                         .collect::<Vec<_>>(),
                 )
                 .split(chunks[1]);
 
             // 绘制可见的 positions
             for (i, info) in visible_positions.enumerate() {
-                let pos_block = self.render_position_block(info);
-                f.render_widget(pos_block, position_chunks[i]);
+                self.render_position_block(f, position_chunks[i], info);
+                // f.render_widget(pos_block, position_chunks[i]);
             }
 
             // 帮助信息
@@ -117,30 +157,36 @@ impl<'a> PositionManager<'a> {
     }
 
     // 渲染单个 position 信息块
-    fn render_position_block<'b>(&self, position_info: &'b PositionInfo) -> Paragraph<'b> {
-        let price_bar = Self::create_price_bar(position_info);
+    fn render_position_block<'b>(
+        &self,
+        f: &mut Frame,
+        area: ratatui::prelude::Rect,
+        position_info: &'b PositionInfo,
+    ) {
+        // 首先垂直分割成上下两部分
+        let main_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(5), // 上部分：基本信息
+                Constraint::Min(3),    // 下部分：余额信息
+            ])
+            .split(area);
 
-        // 获取balance信息
+        // 下部分水平分割成左右两部分
+        let balance_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50), // 左边：Current Balance
+                Constraint::Percentage(50), // 右边：Unclaimed Swap Fee
+            ])
+            .split(main_chunks[1]);
+
         let pair_names = position_info
             .get_pair_names()
             .unwrap_or(("X".to_string(), "Y".to_string()));
-        let balance_line = if let Some((amount_x, amount_y, fee_x, fee_y)) = position_info.balance {
-            Line::from(vec![
-                Span::raw("Current Balance: "),
-                Span::styled(format!("{}: {:.6} ", pair_names.0, amount_x), Color::Red),
-                Span::styled(format!("{}: {:.6} ", pair_names.1, amount_y), Color::Green),
-                Span::raw("Unclaimed Swap Fee: "),
-                Span::styled(format!("{}: {:.6} ", pair_names.0, fee_x), Color::Red),
-                Span::styled(format!("{}: {:.6}", pair_names.1, fee_y), Color::Green),
-            ])
-        } else {
-            Line::from(vec![Span::styled(
-                "Failed to get balance",
-                Style::default().fg(Color::Red),
-            )])
-        };
 
-        let content = vec![
+        // 渲染基本信息
+        let basic_info = Paragraph::new(vec![
             Line::from(vec![
                 Span::styled(
                     format!(
@@ -156,14 +202,118 @@ impl<'a> PositionManager<'a> {
                 "Price Range: {} - {}",
                 position_info.lower_bin_price, position_info.upper_bin_price
             ))]),
-            Line::from(price_bar),
+            Line::from(Self::create_price_bar(position_info)),
             Line::from(vec![Span::raw(format!(
                 "Current Price: {}",
                 position_info.active_bin_price
             ))]),
-            balance_line,
-        ];
-        Paragraph::new(content).block(Block::default().borders(Borders::ALL))
+        ])
+        .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT));
+        f.render_widget(basic_info, main_chunks[0]);
+
+        if let Some((amount_x, amount_y, fee_x, fee_y)) = position_info.balance {
+            let total_balance = position_info
+                .token_x_price
+                .map_or(0.0, |price| amount_x * price)
+                + position_info
+                    .token_y_price
+                    .map_or(0.0, |price| amount_y * price);
+            let total_fee = position_info
+                .token_x_price
+                .map_or(0.0, |price| fee_x * price)
+                + position_info
+                    .token_y_price
+                    .map_or(0.0, |price| fee_y * price);
+            // draw Current Balance
+            let current_balance = Paragraph::new(vec![Line::from(vec![
+                Span::styled(
+                    format!("{}: {:.6} ", pair_names.0, amount_x,),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::styled(
+                    format!(
+                        "(${:.2})",
+                        position_info
+                            .token_x_price
+                            .map_or(0.0, |price| amount_x * price)
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("    {}: {:.6} ", pair_names.1, amount_y),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::styled(
+                    format!(
+                        "(${:.2})",
+                        position_info
+                            .token_y_price
+                            .map_or(0.0, |price| amount_y * price)
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])])
+            .block(
+                Block::default()
+                    .borders(Borders::LEFT | Borders::BOTTOM)
+                    .title(Line::from(vec![
+                        Span::raw("Current Balance: "),
+                        Span::styled(
+                            format!("${:.2}", total_balance),
+                            Style::default().fg(Color::Blue),
+                        ),
+                    ])),
+            );
+            f.render_widget(current_balance, balance_chunks[0]);
+
+            // 渲染 Unclaimed Swap Fee
+            let unclaimed_fee = Paragraph::new(vec![Line::from(vec![
+                Span::styled(
+                    format!("{}: {:.6} ", pair_names.0, fee_x),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::styled(
+                    format!(
+                        "(${:.2})",
+                        position_info
+                            .token_x_price
+                            .map_or(0.0, |price| fee_x * price)
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("    {}: {:.6} ", pair_names.1, fee_y,),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::styled(
+                    format!(
+                        "(${:.2})",
+                        position_info
+                            .token_y_price
+                            .map_or(0.0, |price| fee_y * price)
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])])
+            .block(
+                Block::default()
+                    .borders(Borders::RIGHT | Borders::BOTTOM)
+                    .title(Line::from(vec![
+                        Span::raw("Unclaimed Swap Fee: "),
+                        Span::styled(
+                            format!("${:.2}", total_fee),
+                            Style::default().fg(Color::Magenta),
+                        ),
+                    ])),
+            );
+            f.render_widget(unclaimed_fee, balance_chunks[1]);
+        } else {
+            // 如果没有余额信息，显示错误消息
+            let error_msg = Paragraph::new("Failed to get balance")
+                .style(Style::default().fg(Color::Red))
+                .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM));
+            f.render_widget(error_msg, main_chunks[1]);
+        }
     }
 
     // 创建价格条

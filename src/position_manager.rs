@@ -134,6 +134,8 @@ impl<'a> PositionManager<'a> {
             active_bin_price: pair_info.token_price,
             last_updated_at: position.last_updated_at,
             balance: None,
+            token_x_price: None,
+            token_y_price: None,
         };
 
         Ok(position_info)
@@ -244,6 +246,7 @@ impl<'a> PositionManager<'a> {
                                     )))
                                     .await;
                                 position_info.with_balance(&program).await.ok();
+                                position_info.with_price().await.ok();
                                 // 只处理token_y_mint为wsol的position
                                 if position_info.token_y_mint == spl_token::native_mint::id() {
                                     if stop_loss {
