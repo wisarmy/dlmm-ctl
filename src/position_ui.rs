@@ -8,9 +8,9 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
+use rust_decimal::prelude::ToPrimitive;
 
 impl<'a> PositionManager<'a> {
-    // 添加滚动控制方法
     pub fn scroll_up(&mut self) {
         if self.scroll_offset > 0 {
             self.scroll_offset -= 1;
@@ -23,7 +23,7 @@ impl<'a> PositionManager<'a> {
         }
     }
 
-    // 添加绘制界面的方法
+    // Draw the UI
     pub async fn draw_ui(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
@@ -31,11 +31,11 @@ impl<'a> PositionManager<'a> {
         terminal.draw(|f| {
             let size = f.area();
 
-            // 计算可见区域能显示多少个 position
-            let visible_height = size.height as usize - 7; // 减去标题和帮助区域的高度
-            let positions_per_page = visible_height / 7; // 每个 position 占 6 行高度
+            // Calculate how many positions can be displayed in the visible area
+            let visible_height = size.height as usize - 7; // the height of the title and help area
+            let positions_per_page = visible_height / 8; //  the height of each position block
 
-            // 获取当前可见的 position 切片
+            // Get the visible positions
             let visible_positions = self
                 .current_positions
                 .iter()
@@ -47,20 +47,20 @@ impl<'a> PositionManager<'a> {
                 .margin(1)
                 .constraints(
                     [
-                        Constraint::Length(3), // 标题
-                        Constraint::Min(0),    // position 列表
-                        Constraint::Length(3), // 帮助信息
+                        Constraint::Length(3), // title
+                        Constraint::Min(0),    // positions
+                        Constraint::Length(3), // help
                     ]
                     .as_ref(),
                 )
                 .split(size);
 
-            // 将标题区域分成左右两部分
+            // split the title area
             let title_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(50), // 左侧标题
-                    Constraint::Percentage(50), // 右侧时间
+                    Constraint::Percentage(50), // left title
+                    Constraint::Percentage(50), // right status
                 ])
                 .split(chunks[0]);
 
@@ -88,7 +88,7 @@ impl<'a> PositionManager<'a> {
                         (value_acc + position_value.0, fee_acc + position_value.1)
                     });
 
-            // 左侧标题
+            // left title
             let title_text = Line::from(vec![
                 Span::raw(format!(
                     "Position Monitor ({}/{} positions) ",
@@ -114,7 +114,7 @@ impl<'a> PositionManager<'a> {
                 .style(Style::default().fg(Color::Cyan))
                 .block(Block::default().borders(Borders::LEFT | Borders::BOTTOM | Borders::TOP));
 
-            // 右侧状态信息
+            // right status
             let status_message = Paragraph::new(format!("{}", self.status_message))
                 .style(Style::default().fg(Color::Yellow))
                 .alignment(Alignment::Right)
@@ -123,7 +123,7 @@ impl<'a> PositionManager<'a> {
             f.render_widget(title, title_chunks[0]);
             f.render_widget(status_message, title_chunks[1]);
 
-            // 为可见的 positions 创建显示区域
+            // Create a layout with vertical direction
             let position_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(
@@ -134,13 +134,22 @@ impl<'a> PositionManager<'a> {
                 )
                 .split(chunks[1]);
 
-            // 绘制可见的 positions
+            // render each position block
             for (i, info) in visible_positions.enumerate() {
                 self.render_position_block(f, position_chunks[i], info);
                 // f.render_widget(pos_block, position_chunks[i]);
             }
 
-            // 帮助信息
+            // split the help area into left and right parts
+            let help_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(70), // left help
+                    Constraint::Percentage(30), // right sol price
+                ])
+                .split(chunks[2]);
+
+            // help message
             let help_text = Line::from(vec![
                 Span::raw("Press "),
                 Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
@@ -148,36 +157,53 @@ impl<'a> PositionManager<'a> {
                 Span::styled("q", Style::default().fg(Color::Yellow)),
                 Span::raw(" to quit"),
             ]);
-
-            let help = Paragraph::new(help_text).block(Block::default().borders(Borders::ALL));
-            f.render_widget(help, chunks[2]);
+            // sol price
+            let sol_text = Line::from(vec![
+                Span::raw("SOL: "),
+                Span::styled(
+                    format!("${:.2}", self.sol_price),
+                    Style::default().fg(Color::Green),
+                ),
+            ]);
+            f.render_widget(
+                Paragraph::new(help_text).block(
+                    Block::default().borders(Borders::TOP | Borders::LEFT | Borders::BOTTOM),
+                ),
+                help_chunks[0],
+            );
+            f.render_widget(
+                Paragraph::new(sol_text).alignment(Alignment::Right).block(
+                    Block::default().borders(Borders::TOP | Borders::RIGHT | Borders::BOTTOM),
+                ),
+                help_chunks[1],
+            );
         })?;
 
         Ok(())
     }
 
-    // 渲染单个 position 信息块
+    // Render the position block
     fn render_position_block<'b>(
         &self,
         f: &mut Frame,
         area: ratatui::prelude::Rect,
         position_info: &'b PositionInfo,
     ) {
-        // 首先垂直分割成上下两部分
+        // Split the area into two parts: top and bottom
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5), // 上部分：基本信息
-                Constraint::Min(3),    // 下部分：余额信息
+                Constraint::Length(5), // top part: basic info
+                Constraint::Min(3),    // bottom part: balance info
             ])
             .split(area);
 
-        // 下部分水平分割成左右两部分
+        // Split the bottom part into two parts: left and right
         let balance_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(50), // 左边：Current Balance
-                Constraint::Percentage(50), // 右边：Unclaimed Swap Fee
+                Constraint::Percentage(50), // left：Current Balance
+                Constraint::Percentage(50), // right：Unclaimed Swap Fee
             ])
             .split(main_chunks[1]);
 
@@ -185,7 +211,7 @@ impl<'a> PositionManager<'a> {
             .get_pair_names()
             .unwrap_or(("X".to_string(), "Y".to_string()));
 
-        // 渲染基本信息
+        // draw basic info
         let basic_info = Paragraph::new(vec![
             Line::from(vec![
                 Span::styled(
@@ -203,10 +229,16 @@ impl<'a> PositionManager<'a> {
                 position_info.lower_bin_price, position_info.upper_bin_price
             ))]),
             Line::from(Self::create_price_bar(position_info)),
-            Line::from(vec![Span::raw(format!(
-                "Current Price: {}",
-                position_info.active_bin_price
-            ))]),
+            Line::from(vec![
+                Span::raw(format!("Current Price: {}", position_info.active_bin_price)),
+                Span::styled(
+                    format!(
+                        " (${})",
+                        position_info.active_bin_price.to_f64().unwrap_or(0.0) * self.sol_price
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
         ])
         .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT));
         f.render_widget(basic_info, main_chunks[0]);
@@ -266,7 +298,7 @@ impl<'a> PositionManager<'a> {
             );
             f.render_widget(current_balance, balance_chunks[0]);
 
-            // 渲染 Unclaimed Swap Fee
+            // draw Unclaimed Swap Fee
             let unclaimed_fee = Paragraph::new(vec![Line::from(vec![
                 Span::styled(
                     format!("{}: {:.6} ", pair_names.0, fee_x),
@@ -308,7 +340,7 @@ impl<'a> PositionManager<'a> {
             );
             f.render_widget(unclaimed_fee, balance_chunks[1]);
         } else {
-            // 如果没有余额信息，显示错误消息
+            // draw error message
             let error_msg = Paragraph::new("Failed to get balance")
                 .style(Style::default().fg(Color::Red))
                 .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM));
@@ -316,17 +348,14 @@ impl<'a> PositionManager<'a> {
         }
     }
 
-    // 创建价格条
+    // Create a price bar
     fn create_price_bar(info: &PositionInfo) -> Vec<Span> {
         let mut bar = vec![];
 
-        // 获取区间总长度
         let bin_range = info.upper_bin_id - info.lower_bin_id + 1;
-
-        // bar的宽度使用实际的bin数量
         let bar_width = bin_range as usize;
 
-        // 计算当前价格在区间内的相对位置
+        // Calculate the position of the current price in the bar
         let position = (info.active_bin_id - info.lower_bin_id) as usize;
 
         for i in 0..bar_width {

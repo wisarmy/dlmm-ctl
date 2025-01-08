@@ -8,14 +8,14 @@ use lb_clmm::{
 };
 
 pub fn parse_position_data(data: &[u8]) -> Result<PositionV2> {
-    // 辅助函数：从切片中解析指定类型的数据
+    // Helper function to parse data of a specific type from a slice
     fn parse_slice<T: AnchorDeserialize>(data: &[u8]) -> Result<T> {
         T::try_from_slice(data).map_err(anyhow::Error::from)
     }
 
-    let start = 8; // 跳过discriminator
+    let start = 8; // skip discriminator
 
-    // 解析 liquidity_shares 数组
+    // Parse the liquidity_shares array
     let mut liquidity_shares = [0u128; MAX_BIN_PER_POSITION];
     for i in 0..MAX_BIN_PER_POSITION {
         liquidity_shares[i] = u128::from_le_bytes(
@@ -25,21 +25,21 @@ pub fn parse_position_data(data: &[u8]) -> Result<PositionV2> {
         );
     }
 
-    // 解析 reward_infos 数组
+    // Parse reward_infos array
     let reward_start = start + 64 + MAX_BIN_PER_POSITION * 16;
     let mut reward_infos = [UserRewardInfo::default(); MAX_BIN_PER_POSITION];
     for i in 0..MAX_BIN_PER_POSITION {
         reward_infos[i] = parse_slice(&data[reward_start + i * 48..reward_start + (i + 1) * 48])?;
     }
 
-    // 解析 fee_infos 数组
+    // Parse fee_infos array
     let fee_start = reward_start + MAX_BIN_PER_POSITION * 48;
     let mut fee_infos = [FeeInfo::default(); MAX_BIN_PER_POSITION];
     for i in 0..MAX_BIN_PER_POSITION {
         fee_infos[i] = parse_slice(&data[fee_start + i * 48..fee_start + (i + 1) * 48])?;
     }
 
-    // 解析 total_claimed_rewards 数组
+    // Parse the total_claimed_rewards array
     let claimed_rewards_start = fee_start + MAX_BIN_PER_POSITION * 48 + 32;
     let mut total_claimed_rewards = [0u64; 2];
     for i in 0..2 {
@@ -89,24 +89,23 @@ pub fn parse_position_data(data: &[u8]) -> Result<PositionV2> {
 
 #[allow(dead_code)]
 pub fn parse_bin_data(data: &[u8]) -> Result<BinArray> {
-    // 辅助函数：从切片中解析指定类型的数据
+    // Helper function to parse data of a specific type from a slice
     fn parse_slice<T: AnchorDeserialize>(data: &[u8]) -> Result<T> {
         T::try_from_slice(data).map_err(anyhow::Error::from)
     }
 
-    let start = 8; // 跳过discriminator
+    let start = 8; // skip discriminator
 
     let index: i64 = parse_slice(&data[start..start + 8])?;
     let version: u8 = parse_slice(&data[start + 8..start + 9])?;
     let _padding: [u8; 7] = data[start + 9..start + 16].try_into()?;
     let lb_pair: Pubkey = parse_slice(&data[start + 16..start + 48])?;
 
-    // 为bins数组分配内存
+    // Allocate memory for the bins array
     let mut bins = [Bin::default(); MAX_BIN_PER_ARRAY];
 
-    // 解析每一个bin的数据
     let bins_start = start + 48;
-    let bin_size = 144; // Bin结构体的大小
+    let bin_size = 144; // Bin size in bytes
 
     for i in 0..MAX_BIN_PER_ARRAY {
         let bin_start = bins_start + i * bin_size;

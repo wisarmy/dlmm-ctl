@@ -1,32 +1,33 @@
 # dlmm-ctl
 
-1. 安装 sqlx-cli 工具
+1. Install sqlx-cli tool
 ```shell
 cargo install sqlx-cli
 ```
 
-2. 配置
+2. Configuration
 ```shell
 cp .env.example .env
 ```
 
-3. 数据库配置
+3. Database setup
 ```shell
 mkdir data
 sqlx database create
+# If using binary release, please manually copy migrations dir before running this command
 sqlx migrate run
 ```
 
-4. 编译
+4. Build
 ```shell
 cargo build -r
 ```
 
-5. 运行
+5. Run
 ```shell
-# 监控仓位
+# Monitor positions
 ./target/release/dlmm-ctl monitor-positions
 
-# 监控仓位并设置止损
+# Monitor positions with stop-loss enabled
 ./target/release/dlmm-ctl monitor-positions --stop-loss
 ```

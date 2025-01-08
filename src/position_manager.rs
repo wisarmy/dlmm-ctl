@@ -36,6 +36,7 @@ use crate::{
     position::{PositionInfo, PositionMessage, UiMessage},
     position_process::process_positions,
     token,
+    utils::price::get_sol_price,
 };
 
 pub struct PositionManager<'a> {
@@ -45,6 +46,7 @@ pub struct PositionManager<'a> {
     pub scroll_offset: usize,
     pub status_message: String,
     pub current_positions: Vec<PositionInfo>,
+    pub sol_price: f64,
 }
 
 impl<'a> PositionManager<'a> {
@@ -56,6 +58,7 @@ impl<'a> PositionManager<'a> {
             scroll_offset: 0,
             status_message: "".to_string(),
             current_positions: vec![],
+            sol_price: 0.0,
         }
     }
 
@@ -173,12 +176,12 @@ impl<'a> PositionManager<'a> {
 
         Self::draw_loading(&mut terminal, "Loading positions...")?;
 
-        // 创建用于UI控制的channel
+        // create a channel to communicate with the UI
         let (tx, mut rx) = mpsc::channel(32);
         let input_tx = tx.clone();
         let update_tx = tx.clone();
 
-        // 创建一个处理键盘输入的任务
+        // create input task
         let input_handle = tokio::spawn(async move {
             loop {
                 if event::poll(Duration::from_millis(100)).unwrap_or(false) {
@@ -199,7 +202,7 @@ impl<'a> PositionManager<'a> {
             }
         });
 
-        // 创建数据更新任务
+        // create update task
         let program_clone = self.program.clone();
         let wallet = self.wallet;
         let db = self.db.clone();
@@ -210,6 +213,12 @@ impl<'a> PositionManager<'a> {
 
             loop {
                 interval_timer.tick().await;
+                // get sol price
+                if let Ok(Some(price)) = get_sol_price().await {
+                    if let Err(err) = update_tx.send(UiMessage::UpdateSolPrice(price)).await {
+                        error!("Failed to send SOL price update: {}", err);
+                    }
+                }
                 let _ = update_tx
                     .send(UiMessage::UpdateStatus(format!(
                         "Fetching positions for {}",
@@ -320,6 +329,9 @@ impl<'a> PositionManager<'a> {
                     } {
                         error!("Failed to update UI: {}", err);
                     }
+                }
+                UiMessage::UpdateSolPrice(price) => {
+                    self.sol_price = price;
                 }
                 UiMessage::UpdateStatus(msg) => {
                     if let Err(err) = {
@@ -504,12 +516,12 @@ impl<'a> PositionManager<'a> {
             }
         }
 
-        // 清理终端
+        // cleanup
         disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
 
-        // 取消所有任务
+        // cancel tasks
         input_handle.abort();
         update_handle.abort();
         position_process_handler.abort();

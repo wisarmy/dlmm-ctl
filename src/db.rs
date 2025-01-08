@@ -17,15 +17,15 @@ pub struct Position {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum PositionStatus {
-    // 等待移除流动性
+    // wait remove liquidity
     WaitRemoveLiquidity,
-    // 等待领取手续费
+    // wait claim fees
     WaitClaimFees,
-    // 等待平仓
+    // wait close position
     WaitClose,
-    // 等待清仓
+    // wait sell all position
     WaitSellAll,
-    // 终止
+    // terminate position
     Terminate,
 }
 

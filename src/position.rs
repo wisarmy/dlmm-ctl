@@ -31,6 +31,7 @@ pub enum UiMessage {
     UpdateStatus(String),
     UpdatePositions(Vec<PositionInfo>),
     Position(PositionMessage),
+    UpdateSolPrice(f64),
 }
 
 #[derive(Debug, Clone)]

@@ -6,11 +6,10 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化环境
+    // init
     dotenvy::dotenv().ok();
     dlmm_ctl::logger::init(true);
 
-    // 设置连接
     let payer = get_payer()?;
     let (rpc_url, wss_url) = dlmm_ctl::get_random_rpc_url()?;
     let client = Client::new_with_options(
@@ -20,7 +19,6 @@ async fn main() -> Result<()> {
     );
     let program = Arc::new(client.program(lb_clmm::ID)?);
 
-    // 创建position manager获取所有positions
     let db = dlmm_ctl::db::Database::new(&env::var("DATABASE_URL")?).await?;
     let position_manager = PositionManager::new(&program, payer.pubkey(), db);
     let positions = position_manager.get_positions().await?;
